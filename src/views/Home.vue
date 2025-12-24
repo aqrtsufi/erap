@@ -8,11 +8,49 @@
     import type { BookMeta } from "../lib/types";
     
     const aboutOpen = ref(false);
-const builtLocal = computed(() => new Date(BUILD_DATE_ISO).toLocaleString());
+    const builtLocal = computed(() =>
+  new Date(BUILD_DATE_ISO).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  })
+);
+
+// const builtLocal = computed(() => new Date(BUILD_DATE_ISO).toLocaleString());
     const router = useRouter();
     const books = ref<BookMeta[]>([]);
     const showTour = ref(false);
     
+    const tourOpen = ref(false);
+const tourStep = ref(0);
+
+const tourCurrent = computed(() => TOUR_STEPS[tourStep.value] ?? TOUR_STEPS[0]);
+
+
+const TOUR_STEPS = [
+  { title: "Import an EPUB", body: "Tap “Import EPUB” to add a book from your device." },
+  { title: "Open a book", body: "Tap a book cover/title to enter the reader." },
+  { title: "Glossary popups", body: "Tap underlined glossary/footnote links to see the definition popup." },
+  { title: "Search", body: "Use search to find text and jump directly to the match." },
+  { title: "Study mode", body: "Enable Study Mode, then tap once on the page to show/hide controls." },
+] as const;
+
+function startTour() {
+  tourStep.value = 0;
+  tourOpen.value = true;
+}
+function nextTour() {
+  if (tourStep.value < TOUR_STEPS.length - 1) tourStep.value++;
+}
+function prevTour() {
+  if (tourStep.value > 0) tourStep.value--;
+}
+function closeTour() {
+  tourOpen.value = false;
+}
+
+
+
     onMounted(async () => {
       books.value = await loadBooks();
       showTour.value = !(await isOnboarded());
@@ -57,6 +95,16 @@ const builtLocal = computed(() => new Date(BUILD_DATE_ISO).toLocaleString());
       <div class="min-h-full bg-base-100">
         <div class="navbar bg-base-200 shadow-sm">
           <div class="flex-1 px-2 text-lg font-semibold">Ebook Reader Ansari Publications</div>
+
+          <div class="alert alert-info rounded-none flex items-center justify-between">
+  <div class="flex items-center gap-2">
+    <span class="font-semibold">Onboarding Tour</span>
+    <span class="text-sm opacity-80 hidden sm:inline">Quick guide to get started.</span>
+  </div>
+  <button class="btn btn-sm" @click="startTour">Start</button>
+</div>
+
+
           <div class="flex-none">
             <label class="btn btn-primary btn-sm">
               Import EPUB
@@ -99,6 +147,27 @@ const builtLocal = computed(() => new Date(BUILD_DATE_ISO).toLocaleString());
   <div class="text-sm space-y-2">
     <div><span class="font-semibold">Version:</span> {{ APP_VERSION }}</div>
     <div><span class="font-semibold">Built:</span> {{ builtLocal }}</div>
+  </div>
+</Modal>
+
+<Modal 
+:open="tourOpen" :title="tourCurrent.title" @close="closeTour"
+>
+  <p>{{ tourCurrent.body }}</p>
+    <div class="flex items-center justify-between">
+      <button class="btn btn-sm" :disabled="tourStep === 0" @click="prevTour">Back</button>
+
+      <div class="text-xs opacity-70">
+        {{ tourStep + 1 }} / {{ TOUR_STEPS.length }}
+      </div>
+
+      <button
+        class="btn btn-sm btn-primary"
+        @click="tourStep === TOUR_STEPS.length - 1 ? closeTour() : nextTour()"
+      >
+        {{ tourStep === TOUR_STEPS.length - 1 ? "Done" : "Next" }}
+      </button>
+    </div>
   </div>
 </Modal>
 

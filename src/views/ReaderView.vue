@@ -483,6 +483,11 @@ bookMeta.value = books[i] ?? null;
         const res = await ensureIndex(props.id, book);
         idx = res.idx;
         hrefText = res.hrefText;
+        console.info("[search] ready", { chapters: Object.keys(hrefText).length });
+(window as any).__readerDebug = {
+  search: (q: string) => doSearch(idx, hrefText, q),
+};
+
       } finally {
         indexing.value = false;
       }

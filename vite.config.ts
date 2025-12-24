@@ -6,13 +6,28 @@ import { VitePWA } from "vite-plugin-pwa";
 export default defineConfig({
   base: "/erap/",
   build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules/epubjs")) return "epub";
+          if (id.includes("node_modules/flexsearch")) return "search";
+          // optional: split vue/vendor
+          if (id.includes("node_modules")) return "vendor";
+        },
+      },
+    },
+    chunkSizeWarningLimit: 900, // kB (default ~500)
     outDir: "docs",
     emptyOutDir: true,
+    cssMinify: "esbuild", // ✅ removes the [lightningcss minify] @property warning
   },
   plugins: [
     vue(),
     tailwindcss(),
     VitePWA({
+      workbox: {
+        maximumFileSizeToCacheInBytes: 3 * 1024 * 1024, // 3 MB
+      },
       registerType: "autoUpdate",
       manifest: {
         name: "Ebook Reader",
