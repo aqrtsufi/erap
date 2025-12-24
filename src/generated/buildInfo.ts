@@ -1,3 +1,3 @@
 // AUTO-GENERATED on build. Do not edit.
-export const APP_VERSION = "0.01" as const;
-export const BUILD_DATE_ISO = "2025-12-24T03:54:32.033Z" as const;
+export const APP_VERSION = "0.03" as const;
+export const BUILD_DATE_ISO = "2025-12-24T17:20:22.469Z" as const;

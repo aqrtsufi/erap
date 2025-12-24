@@ -9,7 +9,7 @@
     
     const aboutOpen = ref(false);
     const builtLocal = computed(() =>
-  new Date(BUILD_DATE_ISO).toLocaleDateString(undefined, {
+  new Date(BUILD_DATE_ISO).toLocaleDateString("en-US", {
     year: "numeric",
     month: "long",
     day: "numeric",
@@ -24,7 +24,6 @@
     const tourOpen = ref(false);
 const tourStep = ref(0);
 
-const tourCurrent = computed(() => TOUR_STEPS[tourStep.value] ?? TOUR_STEPS[0]);
 
 
 const TOUR_STEPS = [
@@ -34,6 +33,9 @@ const TOUR_STEPS = [
   { title: "Search", body: "Use search to find text and jump directly to the match." },
   { title: "Study mode", body: "Enable Study Mode, then tap once on the page to show/hide controls." },
 ] as const;
+
+const tourCurrent = computed(() => TOUR_STEPS[tourStep.value] ?? TOUR_STEPS[0]);
+
 
 function startTour() {
   tourStep.value = 0;
@@ -153,7 +155,10 @@ function closeTour() {
 <Modal 
 :open="tourOpen" :title="tourCurrent.title" @close="closeTour"
 >
-  <p>{{ tourCurrent.body }}</p>
+<div class="space-y-4">
+  <p class="text-sm leading-relaxed">{{ tourCurrent.body }}</p>
+
+
     <div class="flex items-center justify-between">
       <button class="btn btn-sm" :disabled="tourStep === 0" @click="prevTour">Back</button>
 
@@ -173,7 +178,7 @@ function closeTour() {
 
 
 
-      </div>
+</div>
       
     </template>
     

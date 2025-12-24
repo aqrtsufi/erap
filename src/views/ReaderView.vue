@@ -12,7 +12,7 @@
     import { defineWordFallback } from "../lib/dictionary";
     import { detectProfileFromMetadata } from "../lib/profiles";
     import { buildQuoteText } from "../lib/quote";
-    import { ensureIndex, search as doSearch } from "../lib/search";
+    import { makeIndex , ensureIndex, search as doSearch } from "../lib/search";
     import { startSession, endSession, totals } from "../lib/analytics";
     import { safeText } from "../lib/epub";
     import type { ReaderPrefs } from "../lib/types";
@@ -34,8 +34,16 @@
     const q = ref("");
     const results = ref<{ href: string; snippet: string }[]>([]);
 
+    const idxReady = ref(false);
+const indexDone = ref(0);
+const indexTotal = ref(0);
+const indexFromCache = ref(false);
+
+
     const pendingSearch = ref<{ href: string; query: string } | null>(null);
 
+
+    
     type TocItem = { href: string; label: string; subitems?: TocItem[] };
 
 const tocOpen = ref(false);
@@ -130,18 +138,31 @@ async function scrollToQueryInRendered(contents: any, query: string) {
   const range = findRangeForQuery(doc, query);
   if (!range) return;
 
-  // Compute CFI then display to scroll exactly
-  try {
-    const cfi = contents.cfiFromRange(range);
-    if (cfi) await rendition.display(cfi);
-  } catch {}
+  const rect = range.getBoundingClientRect();
+  const win = contents.window as Window;
 
-  // Fallback (still helps in some engines)
+  // center the match in the iframe viewport
+  const targetY = win.scrollY + rect.top - win.innerHeight * 0.33;
+  win.scrollTo({ top: Math.max(0, targetY), behavior: "instant" as any });
+
+  // (optional) also ensure something is focused for accessibility
   try {
-    const el = (range.startContainer as any)?.parentElement as HTMLElement | null;
-    el?.scrollIntoView?.({ block: "center" });
+    (range.startContainer as any)?.parentElement?.scrollIntoView?.({ block: "center" });
   } catch {}
 }
+
+  // Compute CFI then display to scroll exactly
+  // try {
+  //   const cfi = contents.cfiFromRange(range);
+  //   if (cfi) await rendition.display(cfi);
+  // } catch {}
+
+  // Fallback (still helps in some engines)
+//   try {
+//     const el = (range.startContainer as any)?.parentElement as HTMLElement | null;
+//     el?.scrollIntoView?.({ block: "center" });
+//   } catch {}
+// }
 
 async function jumpToSearch(r: { href: string }) {
   const query = q.value.trim();
@@ -400,6 +421,8 @@ async function handleNoterefHref(href0: string, clicked: string, baseHrefHint: s
 
   const noterefDeco = prefs.value.noterefUnderline ? "underline" : "none";
 
+  const padBottom = chrome.value ? "7rem" : "1rem";
+
   rendition.themes.register("user", {
     body: {
       background: prefs.value.bg,
@@ -408,6 +431,7 @@ async function handleNoterefHref(href0: string, clicked: string, baseHrefHint: s
       "line-height": String(prefs.value.lineHeight),
       margin: `${prefs.value.marginEm}em`,
       "text-align": `${prefs.value.textAlign} !important`,
+      "padding-bottom": padBottom,
     },
     p: { "text-align": `${prefs.value.textAlign} !important` },
 
@@ -477,26 +501,90 @@ bookMeta.value = books[i] ?? null;
     }
     
     async function initSearch() {
-      if (!book) return;
-      indexing.value = true;
-      try {
-        const res = await ensureIndex(props.id, book);
-        idx = res.idx;
-        hrefText = res.hrefText;
-        console.info("[search] ready", { chapters: Object.keys(hrefText).length });
-(window as any).__readerDebug = {
-  search: (q: string) => doSearch(idx, hrefText, q),
-};
+      if (!book) return { idx: makeIndex(), hrefText: {}, fromCache: false };
 
-      } finally {
-        indexing.value = false;
-      }
-    }
-    
-    watch(q, () => {
-      if (!idx) return;
-      results.value = q.value.trim() ? doSearch(idx, hrefText, q.value.trim()) : [];
+  indexing.value = true;
+  idxReady.value = false;
+
+  try {
+    console.info("[search] init", { spine: book.spine?.items?.length ?? 0 });
+
+    const res = await ensureIndex(props.id, book, (done, total, fromCache) => {
+      indexDone.value = done;
+      indexTotal.value = total;
+      indexFromCache.value = fromCache;
     });
+
+    idx = res.idx;
+    hrefText = res.hrefText;
+
+    const total = Object.values(hrefText).reduce((a, t) => a + (t?.length || 0), 0);
+const first = Object.entries(hrefText)[0];
+console.info("[search] text", { totalChars: total, firstHref: first?.[0], firstSample: first?.[1]?.slice(0, 120) });
+
+
+
+    idxReady.value = true;
+
+    results.value = q.value.trim() ? doSearch(idx, hrefText, q.value.trim()) : [];
+
+
+    console.info("[search] ready", {
+      chapters: Object.keys(hrefText).length,
+      fromCache: res.fromCache,
+    });
+
+    (window as any).__readerDebug = {
+      status: () => ({
+        ready: idxReady.value,
+        done: indexDone.value,
+        total: indexTotal.value,
+        fromCache: indexFromCache.value,
+        chapters: Object.keys(hrefText).length,
+      }),
+      search: (qq: string) => (idx ? doSearch(idx, hrefText, qq) : []),
+    };
+  } catch (e) {
+    console.error("[search] failed", e);
+  } finally {
+    indexing.value = false;
+  }
+}
+
+
+//     async function initSearch() {
+//       if (!book) return;
+//       indexing.value = true;
+//       try {
+//         const res = await ensureIndex(props.id, book);
+//         idx = res.idx;
+//         hrefText = res.hrefText;
+//         console.info("[search] ready", { chapters: Object.keys(hrefText).length });
+// (window as any).__readerDebug = {
+//   search: (q: string) => doSearch(idx, hrefText, q),
+// };
+
+//       } finally {
+//         indexing.value = false;
+//       }
+//     }
+    
+watch(q, () => {
+  const qq = q.value.trim();
+  if (!qq || !idxReady.value || !idx) {
+    results.value = [];
+    return;
+  }
+  results.value = doSearch(idx, hrefText, qq);
+});
+
+watch(chrome, () => applyTheme());
+
+
+    // watch(q, () => {
+    //   if (!idx) return;
+    //   results.value = q.value.trim() ? doSearch(idx, hrefText, q.value.trim()) : [];
+    // });
     
     async function jump(href: string) {
       closeModal();
@@ -860,7 +948,8 @@ if (prefs.value.studyMode && !a) {
       sessionId = s.id;
     
       // search index (first open might take a bit)
-      await initSearch();
+      // await 
+      initSearch();
     }
 
     watch(() => prefs.value.studyMode, (v) => {
@@ -926,11 +1015,20 @@ onBeforeUnmount(async () => {
     
           <div class="px-3 pb-3">
             <input class="input input-bordered w-full" placeholder="Search in book…" v-model="q" />
-            <div v-if="indexing" class="text-xs opacity-60 mt-1">Indexing… first time can take a bit.</div>
+            <div v-if="indexing" class="text-xs opacity-60 mt-1">  Indexing {{ indexDone }}/{{ indexTotal }}…
+            </div>
+            <div v-else-if="idxReady" class="text-xs opacity-60 mt-1">
+  Search ready ({{ Object.keys(hrefText).length }} chapters{{ indexFromCache ? ", cached" : "" }})
+</div>
             <div v-if="results.length" class="mt-2 max-h-56 overflow-auto bg-base-100 rounded-xl border border-base-300">
+              <div class="max-h-64 overflow-auto border border-base-300 rounded-md">
+
               <div v-for="r in results" :key="r.href" class="p-2 hover:bg-base-200 cursor-pointer" @click="jumpToSearch(r)"              >
                 <div class="text-xs opacity-60">{{ r.href }}</div>
+
                 <div class="text-sm">{{ r.snippet }}</div>
+              </div>
+
               </div>
             </div>
           </div>
