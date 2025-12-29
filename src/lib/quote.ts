@@ -18,12 +18,15 @@ export function buildQuoteText(args: {
   title: string;
   author?: string;
   chapter?: string;
+  section?: string;   // ✅ new
 }) {
   const verseHint = inferVerseHint(args.selectedText);
   const cite = buildCitation(args.profile, {
     title: args.title,
     author: args.author,
-    chapter: args.chapter,
+    // ✅ prefer section; fall back to chapter if section missing
+    section: args.section ?? args.chapter,
+    // chapter: args.chapter,
     verseHint,
   });
 

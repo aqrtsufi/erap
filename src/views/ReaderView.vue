@@ -1,5 +1,5 @@
 <script setup lang="ts">
-    import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+    import { computed, onBeforeUnmount, onMounted, ref, watch, nextTick } from "vue";
     import { useRouter } from "vue-router";
     import ePub from "epubjs";
     
@@ -21,6 +21,22 @@
     const props = defineProps<{ id: string }>();
     const router = useRouter();
     
+    const searchOpen = ref(false);
+const searchInputEl = ref<HTMLInputElement | null>(null);
+
+  const bottomChromeEl = ref<HTMLElement | null>(null);
+const iframeBottomPadPx = ref(24);
+
+
+function openSearchModal() {
+  searchOpen.value = true;
+  nextTick(() => searchInputEl.value?.focus());
+}
+function closeSearchModal() {
+  searchOpen.value = false;
+}
+
+
     const viewer = ref<HTMLDivElement|null>(null);
     const chrome = ref(true);
     
@@ -78,6 +94,7 @@ function onKeydown(e: KeyboardEvent) {
   if (e.key === "Escape") {
     chrome.value = true;
     tocOpen.value = false;
+    searchOpen.value = false;
   }
   if ((e.key === "t" || e.key === "T") && chrome.value) {
     tocOpen.value = !tocOpen.value;
@@ -421,7 +438,7 @@ async function handleNoterefHref(href0: string, clicked: string, baseHrefHint: s
 
   const noterefDeco = prefs.value.noterefUnderline ? "underline" : "none";
 
-  const padBottom = chrome.value ? "7rem" : "1rem";
+  // const padBottom = chrome.value ? "7rem" : "1rem";
 
   rendition.themes.register("user", {
     body: {
@@ -431,7 +448,7 @@ async function handleNoterefHref(href0: string, clicked: string, baseHrefHint: s
       "line-height": String(prefs.value.lineHeight),
       margin: `${prefs.value.marginEm}em`,
       "text-align": `${prefs.value.textAlign} !important`,
-      "padding-bottom": padBottom,
+      "padding-bottom": `${iframeBottomPadPx.value}px`,
     },
     p: { "text-align": `${prefs.value.textAlign} !important` },
 
@@ -484,6 +501,16 @@ function looksLikeNoterefHref(href: string) {
   return !!href && href.includes("#") && /#(fn[-_]?|footnote|note|endnote)/i.test(href);
 }
 
+async function updateIframePad() {
+  await nextTick();
+  const h = chrome.value && bottomChromeEl.value ? bottomChromeEl.value.offsetHeight : 0;
+  iframeBottomPadPx.value = Math.max(24, h + 24);
+  applyTheme();
+}
+
+watch(chrome, () => updateIframePad());
+onMounted(() => window.addEventListener("resize", updateIframePad));
+onBeforeUnmount(() => window.removeEventListener("resize", updateIframePad));
 
 
 
@@ -772,13 +799,25 @@ async function handleNoterefClick(a: HTMLAnchorElement, currentDoc: Document, ba
         const selectedText = safeText(range?.toString());
         if (!selectedText) return;
     
-        const chapterLabel = await currentChapterLabel();
+        const sectionLabel =
+  currentTocLabelForRange(range) ?? (await currentChapterLabel());
+
+  const suraLabel =
+  profile.value === "quran"
+    ? (currentTocLabelForRange(range, (s) => /^sura\b/i.test(s)) ?? undefined)
+    : undefined;
+
+const place = suraLabel ?? sectionLabel;
+
+
+        // const chapterLabel = await currentChapterLabel();
         const quote = buildQuoteText({
             profile:profile.value,
           selectedText,
           title: bookMeta.value?.title || "Untitled",
           author: bookMeta.value?.author,
-          chapter: chapterLabel,
+          section: place,
+  chapter: place, // keep if your buildQuoteText still expects chapter
         });
     
         // quick action modal
@@ -813,6 +852,57 @@ async function handleNoterefClick(a: HTMLAnchorElement, currentDoc: Document, ba
       } catch {}
     }
     
+    function currentTocLabelForRange(
+  range: Range,
+  prefer?: (label: string) => boolean
+): string | undefined {
+  const href = rendition?.location?.start?.href || bookMeta.value?.lastHref;
+  if (!href) return undefined;
+
+  const file = href.split("#")[0];
+  const matches = tocFlat.value.filter(it => (it.href || "").split("#")[0] === file);
+  if (!matches.length) return undefined;
+
+  const doc = range.startContainer?.ownerDocument;
+
+  // 1) Try fragment-aware “nearest above selection”
+  if (doc) {
+    let best: TocFlat | null = null;
+
+    for (const it of matches) {
+      if (prefer && !prefer(it.label)) continue;
+
+      const frag = (it.href || "").split("#")[1];
+      if (!frag) continue;
+
+      const el = doc.getElementById(frag);
+      if (!el) continue;
+
+      try {
+        const r = doc.createRange();
+        r.selectNode(el);
+
+        if (r.compareBoundaryPoints(Range.START_TO_START, range) <= 0) {
+          if (!best || it.depth > best.depth) best = it;
+          else if (best && it.depth === best.depth) best = it; // later wins
+        }
+      } catch {}
+    }
+
+    if (best) return best.label;
+  }
+
+  // 2) Fallback: deepest item in the file that matches predicate (or deepest overall)
+  const pool = prefer ? matches.filter(it => prefer(it.label)) : matches;
+  if (!pool.length) return undefined;
+
+  let best = pool[0]!;
+  for (const it of pool) {
+    if (it.depth > best.depth) best = it;
+    else if (it.depth === best.depth) best = it; // later wins
+  }
+  return best.label;
+}
 
 
 
@@ -827,6 +917,50 @@ async function handleNoterefClick(a: HTMLAnchorElement, currentDoc: Document, ba
         return undefined;
       }
     }
+
+//     function currentSectionLabelForRange(range: Range): string | undefined {
+//   const href = rendition?.location?.start?.href || bookMeta.value?.lastHref;
+//   if (!href) return undefined;
+
+//   const file = href.split("#")[0];
+//   const matches = tocFlat.value.filter(it => (it.href || "").split("#")[0] === file);
+//   if (!matches.length) return undefined;
+
+//   const doc = range.startContainer?.ownerDocument;
+//   if (doc) {
+//     let best: TocFlat | null = null;
+
+//     for (const it of matches) {
+//       const frag = (it.href || "").split("#")[1];
+//       if (!frag) continue;
+
+//       const el = doc.getElementById(frag);
+//       if (!el) continue;
+
+//       try {
+//         const r = doc.createRange();
+//         r.selectNode(el);
+
+//         // TOC target must be at/above the selection
+//         if (r.compareBoundaryPoints(Range.START_TO_START, range) <= 0) {
+//           if (!best || it.depth > best.depth) best = it;
+//           else if (best && it.depth === best.depth) best = it; // later wins
+//         }
+//       } catch {}
+//     }
+
+//     if (best) return best.label;
+//   }
+
+//   // fallback: deepest entry in the file (later wins)
+//   let best = matches[0]!;
+//   for (const it of matches) {
+//     if (it.depth > best.depth) best = it;
+//     else if (it.depth === best.depth) best = it;
+//   }
+//   return best.label;
+// }
+
     
     async function open() {
       const books = await loadBooks();
@@ -1040,7 +1174,7 @@ onBeforeUnmount(async () => {
         </div>
     
         <!-- Bottom chrome -->
-        <div v-if="chrome" class="fixed bottom-0 left-0 right-0 z-30 bg-base-200/95 backdrop-blur border-t border-base-300" @click.stop>
+        <div v-if="chrome" ref="bottomChromeEl" class="fixed bottom-0 left-0 right-0 z-30 bg-base-200/95 backdrop-blur border-t border-base-300" @click.stop>
           <div class="p-3 grid grid-cols-2 sm:grid-cols-4 gap-3">
             <label class="form-control">
               <div class="label"><span class="label-text">Font size</span></div>
@@ -1112,6 +1246,20 @@ onBeforeUnmount(async () => {
 
         <button
   v-if="!chrome"
+  class="fixed z-50 btn btn-sm btn-circle"
+  style="top: calc(env(safe-area-inset-top) + 0.75rem); right: 3.25rem;"
+  @click.stop="openSearchModal"
+  aria-label="Search"
+>
+  <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <circle cx="11" cy="11" r="7"></circle>
+    <path d="M21 21l-4.3-4.3"></path>
+  </svg>
+</button>
+
+
+        <button
+  v-if="!chrome"
   class="fixed z-50 btn btn-sm opacity-80 hover:opacity-100"
   style="top: calc(env(safe-area-inset-top) + 0.75rem); right: 0.75rem;"
   @click="chrome = true"
@@ -1144,6 +1292,37 @@ onBeforeUnmount(async () => {
 
   <div class="modal-backdrop" @click="closeToc"></div>
 </div>
+
+<Modal :open="searchOpen" title="Search" @close="closeSearchModal">
+  <input
+    ref="searchInputEl"
+    class="input input-bordered w-full"
+    placeholder="Search in book…"
+    v-model="q"
+  />
+
+  <div class="text-xs opacity-70 mt-2">
+    <span v-if="indexing">Indexing…</span>
+    <span v-else>Search ready ({{ Object.keys(hrefText).length }} chapters{{ indexFromCache ? ", cached" : "" }})</span>
+  </div>
+
+  <div v-if="q.trim() && !indexing && !results.length" class="mt-3 text-sm opacity-70">
+    No matches.
+  </div>
+
+  <div v-if="results.length" class="mt-3 max-h-80 overflow-auto bg-base-100 rounded-xl border border-base-300">
+    <div
+      v-for="r in results"
+      :key="r.href + r.snippet"
+      class="p-2 hover:bg-base-200 cursor-pointer"
+      @click="jumpToSearch(r); closeSearchModal()"
+    >
+      <div class="text-xs opacity-60">{{ r.href }}</div>
+      <div class="text-sm">{{ r.snippet }}</div>
+    </div>
+  </div>
+</Modal>
+
 
     
         <Modal :open="modalOpen" :title="modalTitle" @close="closeModal">
