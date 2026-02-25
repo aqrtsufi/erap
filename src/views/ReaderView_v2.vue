@@ -39,6 +39,36 @@ const topPadPx = ref(0);
 const bottomPadPx = ref(0);
 const iframeBottomPadPx = ref(24);
 
+// --------------------
+// book + reader state
+// --------------------
+const prefs = ref<ReaderPrefs>(DEFAULT_PREFS);
+const bookMeta = ref<BookMeta | null>(null);
+const profile = ref<BookProfile>("default");
+
+  // Option 1 (Vue): Study Mode is the source of truth for whether settings are collapsed/open.
+// ON  -> collapse settings (hide chrome)
+// OFF -> open settings (show chrome)
+watch(
+  () => prefs.value.studyMode,
+  (on) => {
+    // Close overlays when entering Study Mode so the UI doesn't get "stuck"
+    if (on) {
+      tocOpen.value = false;
+      searchOpen.value = false;
+      modalOpen.value = false;
+
+      // collapse settings panel
+      chrome.value = false;
+    } else {
+      // open settings panel
+      chrome.value = true;
+    }
+  },
+  { immediate: true }
+);
+
+
 const viewerPadStyle = computed(() => ({
   paddingTop: chrome.value ? `${topPadPx.value}px` : "0px",
   paddingBottom: chrome.value ? `${bottomPadPx.value}px` : "0px",
@@ -80,12 +110,6 @@ function closeToc() {
   tocOpen.value = false;
 }
 
-// --------------------
-// book + reader state
-// --------------------
-const prefs = ref<ReaderPrefs>(DEFAULT_PREFS);
-const bookMeta = ref<BookMeta | null>(null);
-const profile = ref<BookProfile>("default");
 
 // ------------------------------------------------------------------
 // v2 features stored in prefs, but accessed via typed wrappers.
